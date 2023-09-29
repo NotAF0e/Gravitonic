@@ -1,19 +1,21 @@
 use macroquad::prelude::*;
+use std::{process::exit, time::Instant};
 
 #[derive(Clone, Copy, Debug)]
 struct VerletObject {
     radius: f32,
 
-    position_current: Vec2,
-    position_old: Vec2,
+    current_position: Vec2,
+    old_position: Vec2,
     acceleration: Vec2,
+    colour: Color,
 }
 impl VerletObject {
     fn update_pos(&mut self, dt: f32) {
-        let velocity: Vec2 = self.position_current - self.position_old;
-        self.position_old = self.position_current;
+        let velocity: Vec2 = self.current_position - self.old_position;
+        self.old_position = self.current_position;
 
-        self.position_current = self.position_current + velocity + self.acceleration * dt * dt;
+        self.current_position = self.current_position + velocity + self.acceleration * dt * dt;
         self.acceleration = Vec2 { x: 0.0, y: 0.0 };
     }
 
@@ -33,7 +35,7 @@ impl Solver {
             Self::apply_gravity(self);
 
             // TODO: REMOVE HARDCODED STUFF
-            Self::apply_constraint(self, Vec2 { x: 960.0, y: 540.0 }, 300.0);
+            Self::apply_constraint(self);
             Self::solve_collisions(self);
             Self::update_all_pos(self, dt);
         }
@@ -61,37 +63,43 @@ impl Solver {
                     (&mut o1[obj_idx_1], &mut o2[0])
                 };
 
-                let collision_axis = obj_1_ref.position_current - obj_2_ref.position_current;
+                let collision_axis = obj_1_ref.current_position - obj_2_ref.current_position;
                 let dist = collision_axis.length();
 
                 if dist < (obj_1_ref.radius + obj_2_ref.radius) {
                     let n = collision_axis / dist;
                     let delta = (obj_1_ref.radius + obj_2_ref.radius) - dist;
                     let displacement = 0.5 * delta * n;
-                    obj_1_ref.position_current += displacement;
-                    obj_2_ref.position_current -= displacement;
+                    obj_1_ref.current_position += displacement;
+                    obj_2_ref.current_position -= displacement;
                 }
             }
         }
     }
 
     // Other functions
-    fn apply_constraint(&mut self, position: Vec2, radius: f32) {
+    fn apply_constraint(&mut self) {
         for obj in &mut self.objects {
-            let dist_to_obj: Vec2 = obj.position_current - position;
-            let dist: f32 = dist_to_obj.length(); // Assuming you have a length() method for Vec2
+            // Ensure the object's position stays within the screen boundaries
+            if obj.current_position.x < 0.0 + obj.radius {
+                obj.current_position.x = 0.0 + obj.radius;
+            } else if obj.current_position.x > screen_width() - obj.radius {
+                obj.current_position.x = screen_width() - obj.radius;
+            }
 
-            if dist > (radius - obj.radius) {
-                // Implement collision response here, e.g., move the object away from the constraint.
-                obj.position_current = position + (dist_to_obj / dist) * (radius - obj.radius);
+            if obj.current_position.y < 0.0 + obj.radius {
+                obj.current_position.y = 0.0 + obj.radius;
+            } else if obj.current_position.y > screen_height() - obj.radius {
+                obj.current_position.y = screen_height() - obj.radius;
             }
         }
     }
 }
+
 fn window_conf() -> Conf {
     Conf {
         window_title: "GRAVITY".to_owned(),
-        fullscreen: false,
+        fullscreen: true,
         window_height: 1080,
         window_width: 1920,
         ..Default::default()
@@ -107,53 +115,83 @@ async fn main() {
     let mut solver = Solver {
         objects: vec![VerletObject {
             radius: 25.0,
-            position_current: Vec2 {
-                x: 1200.0,
-                y: 540.0,
+            current_position: Vec2 {
+                x: center.x,
+                y: center.y,
             },
-            position_old: Vec2 {
-                x: 1200.0,
-                y: 540.0,
+            old_position: Vec2 {
+                x: center.x,
+                y: center.y,
             },
             acceleration: Vec2 { x: 0.0, y: 0.0 },
+            colour: Color {
+                r: 1.0,
+                g: 1.0,
+                b: 1.0,
+                a: 1.0,
+            },
         }],
         gravity: Vec2 { x: 0.0, y: 980.7 }, // Using earth gravity
     };
     loop {
         clear_background(BLACK);
 
-        // For testing
-        draw_circle(960.0, 540.0, 300.0, RED);
-
+        // Draws physics circles
         for obj in &mut solver.objects {
             draw_circle(
-                obj.position_current.x,
-                obj.position_current.y,
+                obj.current_position.x,
+                obj.current_position.y,
                 obj.radius,
-                WHITE,
+                // Water colours based on speed with foam. If not moving: blue, if moving white.
+                Color {
+                    r: (obj.current_position.x + obj.current_position.y
+                        - obj.old_position.x
+                        - obj.old_position.y)
+                        * 1.05,
+                    g: (obj.current_position.x + obj.current_position.y
+                        - obj.old_position.x
+                        - obj.old_position.y)
+                        * 1.05,
+                    b: 1.0,
+                    a: 1.0,
+                },
             )
         }
 
+        // Creates random circles when mouse down
         if is_mouse_button_down(MouseButton::Left) {
             solver.objects.push(VerletObject {
-                radius: 5.0,
-                position_current: Vec2 {
+                radius: rand::gen_range(5.0, 25.0),
+                current_position: Vec2 {
                     x: mouse_position().0,
                     y: mouse_position().1,
                 },
-                position_old: Vec2 {
+                old_position: Vec2 {
                     x: mouse_position().0,
                     y: mouse_position().1,
                 },
                 acceleration: Vec2 { x: 0.0, y: 0.0 },
+                colour: Color {
+                    r: rand::gen_range(0.0, 1.0),
+                    g: rand::gen_range(0.0, 1.0),
+                    b: rand::gen_range(0.0, 1.0),
+                    a: 1.0,
+                },
             })
         }
+        if is_key_pressed(KeyCode::Q) {
+            exit(0);
+        }
+
+        let start = Instant::now();
+        solver.update(dt, 8);
+        let sim_time = start.elapsed().as_secs_f32();
 
         draw_text(
             &("FPS: ".to_owned()
                 + &get_fps().to_string()
-                + " | FRAME TIME: "
-                + &get_frame_time().to_string()),
+                + " | SIM TIME: "
+                + &(sim_time * 1000.0).to_string()),
             5.0,
             15.0,
             20.0,
@@ -166,8 +204,6 @@ async fn main() {
             20.0,
             WHITE,
         );
-
-        solver.update(dt, 8);
         next_frame().await
     }
 }
